@@ -39,7 +39,7 @@ pub enum Passkey {
 impl AsRef<[u8]> for Passkey {
     fn as_ref(&self) -> &[u8] {
         match self {
-            Self::Encrypted(ctext) => &ctext,
+            Self::Encrypted(ctext) => ctext,
             Self::Hash(t) | Self::Plain(t) => t.as_bytes(),
         }
     }
@@ -50,15 +50,7 @@ impl Passkey {
     ///
     /// If the key is encrypted, and `other` is not, requires a key to decrypt with.
     pub fn check(&self, other: &Passkey, key: Option<&String>) -> bool {
-        if let Self::Encrypted(ctext1) = self {
-            if let Self::Encrypted(ctext2) = other {
-                return ctext1 == ctext2;
-            }
-        }
-
-        let hash = other.hash(key);
-
-        hash == self.hash(key)
+        other.hash(key) == self.hash(key)
     }
 
     /// Returns a Passkey::Hash of the password, using sha512.
@@ -159,6 +151,20 @@ impl Password {
         }
     }
 
+    /// Creates a new plaintext password.
+    pub fn plain(pass: String) -> Self {
+        Self::new(Passkey::Plain(pass))
+    }
+
+    /// Creates a new hashed password.
+    pub fn hash(pass: String) -> Self {
+        Self::new(Passkey::Hash(pass))
+    }
+
+    pub fn encrypted(pass: Vec<u8>) -> Self {
+        Self::new(Passkey::Encrypted(pass))
+    }
+
     /// Checks against a passkey.
     ///
     /// If the key is encrypted, and `other` is not, requires a key to decrypt with.
@@ -168,19 +174,14 @@ impl Password {
 
     /// Returns all associated emails.
     pub fn email(&self) -> Vec<String> {
-        self.data
-            .iter()
-            .filter(|d| d.email.is_some())
-            .map(|d| d.email.clone().unwrap())
-            .collect()
+        self.data.iter().filter_map(|d| d.email.clone()).collect()
     }
 
     /// Returns all associated usernames.
     pub fn username(&self) -> Vec<String> {
         self.data
             .iter()
-            .filter(|d| d.username.is_some())
-            .map(|d| d.username.clone().unwrap())
+            .filter_map(|d| d.username.clone())
             .collect()
     }
 
@@ -242,7 +243,11 @@ impl Password {
 
 #[derive(Debug)]
 pub enum LoadPasswordsError {
-    InvalidSyntax,
+    InvalidSyntax(toml::de::Error),
+    InvalidStructure,
+    InvalidPassType,
+    InvalidPass,
+
     FileError(std::io::Error),
 }
 
@@ -255,7 +260,161 @@ pub struct PassManager {
 impl TryFrom<String> for PassManager {
     type Error = LoadPasswordsError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        todo!("make passwords from {value}")
+        let mut manager = PassManager::new();
+
+        let parsed = value
+            .parse::<toml::Table>()
+            .map_err(LoadPasswordsError::InvalidSyntax)?;
+
+        if let Some(toml::Value::Array(passwords)) = &parsed.get("passwords") {
+            for password in passwords {
+                if let Some(toml::Value::String(ty)) = &password.get("type") {
+                    match ty.as_str() {
+                        "plain" => {
+                            if let Some(toml::Value::String(pass)) = &password.get("pass") {
+                                let mut pass = Password::plain(pass.clone());
+
+                                if let Some(toml::Value::Array(locations)) =
+                                    &password.get("location")
+                                {
+                                    let mut locations = locations.iter();
+                                    while let Some(toml::Value::Table(location)) = locations.next()
+                                    {
+                                        let mut data = Data::default();
+
+                                        if let Some(toml::Value::String(name)) =
+                                            &location.get("name")
+                                        {
+                                            data.location = name.clone();
+                                        } else {
+                                            return Err(LoadPasswordsError::InvalidStructure);
+                                        }
+
+                                        if let Some(toml::Value::String(email)) =
+                                            &location.get("email")
+                                        {
+                                            data.email = Some(email.clone());
+                                        }
+
+                                        if let Some(toml::Value::String(username)) =
+                                            &location.get("username")
+                                        {
+                                            data.username = Some(username.clone());
+                                        }
+
+                                        pass.add(data);
+                                    }
+                                }
+
+                                manager.add_password(pass);
+                            } else {
+                                return Err(LoadPasswordsError::InvalidStructure);
+                            }
+                        }
+                        "hash" => {
+                            if let Some(toml::Value::String(pass)) = &password.get("pass") {
+                                let mut pass = Password::hash(pass.clone());
+
+                                if let Some(toml::Value::Array(locations)) =
+                                    &password.get("location")
+                                {
+                                    let mut locations = locations.iter();
+                                    while let Some(toml::Value::Table(location)) = locations.next()
+                                    {
+                                        let mut data = Data::default();
+
+                                        if let Some(toml::Value::String(name)) =
+                                            &location.get("name")
+                                        {
+                                            data.location = name.clone();
+                                        } else {
+                                            return Err(LoadPasswordsError::InvalidStructure);
+                                        }
+
+                                        if let Some(toml::Value::String(email)) =
+                                            &location.get("email")
+                                        {
+                                            data.email = Some(email.clone());
+                                        }
+
+                                        if let Some(toml::Value::String(username)) =
+                                            &location.get("username")
+                                        {
+                                            data.username = Some(username.clone());
+                                        }
+
+                                        pass.add(data);
+                                    }
+                                }
+
+                                manager.add_password(pass);
+                            } else {
+                                return Err(LoadPasswordsError::InvalidStructure);
+                            }
+                        }
+                        "encrypted" => {
+                            if let Some(toml::Value::Array(pass)) = &password.get("pass") {
+                                let mut pass = pass.iter();
+
+                                let mut bytes = Vec::new();
+                                while let Some(&toml::Value::Integer(i)) = pass.next() {
+                                    if !(0..=255).contains(&i) {
+                                        return Err(LoadPasswordsError::InvalidPass);
+                                    } else {
+                                        bytes.push(i as u8);
+                                    }
+                                }
+
+                                let mut pass = Password::encrypted(bytes);
+
+                                if let Some(toml::Value::Array(locations)) =
+                                    &password.get("location")
+                                {
+                                    let mut locations = locations.iter();
+                                    while let Some(toml::Value::Table(location)) = locations.next()
+                                    {
+                                        let mut data = Data::default();
+
+                                        if let Some(toml::Value::String(name)) =
+                                            &location.get("name")
+                                        {
+                                            data.location = name.clone();
+                                        } else {
+                                            return Err(LoadPasswordsError::InvalidStructure);
+                                        }
+
+                                        if let Some(toml::Value::String(email)) =
+                                            &location.get("email")
+                                        {
+                                            data.email = Some(email.clone());
+                                        }
+
+                                        if let Some(toml::Value::String(username)) =
+                                            &location.get("username")
+                                        {
+                                            data.username = Some(username.clone());
+                                        }
+
+                                        pass.add(data);
+                                    }
+                                }
+
+                                manager.add_password(pass);
+                            } else {
+                                return Err(LoadPasswordsError::InvalidStructure);
+                            }
+                        }
+                        _ => return Err(LoadPasswordsError::InvalidPassType),
+                    }
+                } else {
+                    return Err(LoadPasswordsError::InvalidStructure);
+                }
+            }
+        } else {
+            return Err(LoadPasswordsError::InvalidStructure);
+        }
+
+        Ok(manager)
     }
 }
 
@@ -297,43 +456,59 @@ impl PassManager {
         }
     }
 
+    /// Retrieves a password by passkey.
+    ///
+    /// If multiple passwords share a passkey, returns the first occurence.
+    pub fn get_passkey(&self, pass: Passkey) -> Option<Password> {
+        self.passwords.iter().find(|p| p.pass == pass).cloned()
+    }
+
     /// Retrieves a password by location.
-    /// 
+    ///
     /// If multiple passwords share a location, returns the first occurence.
     pub fn get_location(&self, location: String) -> Option<Password> {
         self.get_data(Data::location(location))
     }
-    
+
     /// Retrieves a password by location and email.
-    /// 
+    ///
     /// If multiple passwords share a location and email, returns the first occurence.
     pub fn get_email(&self, location: String, email: String) -> Option<Password> {
         self.get_data(Data::email(location, email))
     }
 
     /// Retrieves a password by location and username.
-    /// 
+    ///
     /// If multiple passwords share a location and username, returns the first occurence.
     pub fn get_username(&self, location: String, username: String) -> Option<Password> {
         self.get_data(Data::username(location, username))
     }
 
     /// Retrieves a password by data.
-    /// 
+    ///
     /// Ignores empty fields in `data`.
     pub fn get_data(&self, data: Data) -> Option<Password> {
-        self.passwords.iter()
+        self.passwords
+            .iter()
             .find(|d| {
-                d.location().contains(&data.location) &&
-                (data.email.is_none() || d.email().contains((&data.email).as_ref().unwrap())) &&
-                (data.username.is_none() || d.username().contains((&data.username).as_ref().unwrap()))
-            }).cloned()
+                d.location().contains(&data.location)
+                    && (data.email.is_none() || d.email().contains((data.email).as_ref().unwrap()))
+                    && (data.username.is_none()
+                        || d.username().contains((data.username).as_ref().unwrap()))
+            })
+            .cloned()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    macro_rules! s {
+        ( $string:expr ) => {
+            String::from($string)
+        };
+    }
 
     #[test]
     fn plain_verif() {
@@ -399,5 +574,45 @@ mod tests {
         assert!(!enc2.check(&hash2, Some(&key1)));
         assert!(!enc2.check(&hash1, Some(&key2)));
         assert!(!enc2.check(&hash1, Some(&key1)));
+    }
+
+    #[test]
+    fn parse_from_toml() {
+        let text = s!(r#"passwords = [
+    # plain password with one full location
+    { type = "plain", pass = "abc123", location = [{name = "example.com", username = "user", email = "user@example.com"}] },
+
+    # hashed password with one location and user
+    { type = "hash", pass = "c70b5dd9ebfb6f51d09d4132b7170c9d20750a7852f00680f65658f0310e810056e6763c34c9a00b0e940076f54495c169fc2302cceb312039271c43469507dc", location = [{name = "example.net", username = "user"}] },
+
+    # encrypted password with no associated data
+    { type = "encrypted", pass = [16, 21, 6, 67, 70, 74] }
+]"#);
+
+        let manager: PassManager = text.try_into().expect("Failed to parse toml");
+
+        assert_eq!(
+            manager
+                .get_email(s!("example.com"), s!("user@example.com"))
+                .expect("Failed to get plain password")
+                .check(&Passkey::Plain(s!("abc123")), None),
+            true
+        );
+
+        assert_eq!(
+            manager
+                .get_username(s!("example.net"), s!("user"))
+                .expect("Failed to get hashed password")
+                .check(&Passkey::Plain(s!("abc123")), None),
+            true
+        );
+
+        assert_eq!(
+            manager
+                .get_passkey(Passkey::Encrypted(vec![16, 21, 6, 67, 70, 74]))
+                .expect("Failed to get encrypted password")
+                .check(&Passkey::Plain(s!("abc123")), Some(&s!("qwerty"))),
+            true
+        );
     }
 }
