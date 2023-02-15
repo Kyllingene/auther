@@ -1,6 +1,6 @@
 [package]
-name = "auther"
-description = "a password manager, both lib and bin"
+name = "auther-lib"
+description = "a password manager lib"
 
 version = "1.2.0"
 edition = "2021"

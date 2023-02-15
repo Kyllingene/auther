@@ -1,8 +1,9 @@
+#[doc = include_str!("../README.md")]
+
 use std::{fs::File, io::Read, path::Path};
 
 use rand_core::{RngCore, SeedableRng};
 use rand_hc::Hc128Rng;
-#[doc = include_str!("../README.md")]
 use sha2::{Digest, Sha512};
 
 fn xor<T: Into<Vec<u8>>>(x: T, y: &String) -> Vec<u8> {
