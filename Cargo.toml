@@ -1,0 +1,14 @@
+[package]
+name = "auther"
+description = "a terminal password manager"
+
+version = "0.1.0"
+edition = "2021"
+
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+sarge = "2.0"
+auther-lib = { path = "auther-lib" }
