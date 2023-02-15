@@ -1,10 +1,4 @@
-use std::{           
-    fs::read_to_string,path::Path,
-                      process::exit
-                    
-                    
-                    
-                    };
+use std::{fs::read_to_string, path::Path, process::exit};
 
 // use auther_lib::*;
 use dirs::home_dir;
