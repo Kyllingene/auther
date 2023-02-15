@@ -11,4 +11,5 @@ license = "MIT"
 
 [dependencies]
 sarge = "2.0"
-auther-lib = { path = "auther-lib" }
+auther-lib = { path = "auther-lib", features = ["serde"] }
+dirs = "4.0.0"
