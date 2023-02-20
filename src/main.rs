@@ -192,13 +192,13 @@ impl eframe::App for Passwords {
                                 ui.label(format!("Email: {email}"));
                             }
                             if let Some(username) = data.username {
-                                ui.label(format!("Email: {username}"));
+                                ui.label(format!("Username: {username}"));
                             }
 
-                            ui.separator();
+                            ui.add_space(10.0);
                         }
 
-                        if ui.label("Show password").hovered() {
+                        if ui.label("Hover to reveal password").hovered() {
                             match password.pass {
                                 Passkey::Plain(pass) => {
                                     ui.label(pass);
@@ -272,11 +272,14 @@ impl eframe::App for Passwords {
                     let file = get_passfile();
                     if self.key.is_empty() {
                         match read_to_string(file) {
-                            Ok(p) => {
-                                if let Ok(p) = PassManager::try_from(p) {
+                            Ok(p) => match PassManager::try_from(p) {
+                                Ok(p) => {
                                     self.passwords = p;
                                 }
-                            }
+                                Err(e) => {
+                                    self.read_error = Some(e.to_string());
+                                }
+                            },
                             Err(e) => {
                                 self.read_error = Some(e.to_string());
                             }
@@ -284,11 +287,14 @@ impl eframe::App for Passwords {
                     } else {
                         let key = self.key.clone();
                         match decrypt(key, file) {
-                            Ok(decrypted) => {
-                                if let Ok(p) = PassManager::try_from(decrypted) {
+                            Ok(decrypted) => match PassManager::try_from(decrypted) {
+                                Ok(p) => {
                                     self.passwords = p;
                                 }
-                            }
+                                Err(e) => {
+                                    self.read_error = Some(e.to_string());
+                                }
+                            },
                             Err(e) => {
                                 self.read_error = Some(e.to_owned());
                             }
