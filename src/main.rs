@@ -1,33 +1,37 @@
-use std::{fs::read_to_string, path::Path, process::exit};
+use std::fs::read_to_string;
+use std::io::{Read, Write};
+use std::{fs::File, path::Path, process::exit};
 
-// use auther_lib::*;
+use auther_lib::{Data, PassManager, Passkey, Password};
 use dirs::home_dir;
-use sarge::*;
+use eframe::egui;
+use magic_crypt::{new_magic_crypt, MagicCryptTrait};
+// use sarge::*;
 
-fn get_passfile(parser: &ArgumentParser) -> String {
-    let config = if let Some(arg) = get_arg!(parser, long, "config") {
-        read_to_string(
-            arg.val
-                .clone()
-                .map(ArgValue::get_str)
-                .unwrap_or(String::new()),
-        )
-        .unwrap_or("".to_string())
-    } else {
-        String::new()
-    }
-    .lines()
-    .next()
-    .map(str::to_string);
+fn get_passfile(/*parser: &ArgumentParser*/) -> String {
+    // let config = if let Some(arg) = get_arg!(parser, long, "config") {
+    //     read_to_string(
+    //         arg.val
+    //             .clone()
+    //             .map(ArgValue::get_str)
+    //             .unwrap_or(String::new()),
+    //     )
+    //     .unwrap_or("".to_string())
+    // } else {
+    //     String::new()
+    // }
+    // .lines()
+    // .next()
+    // .map(str::to_string);
 
-    let filename;
-    if let Some(ArgValue::String(f)) = get_val!(parser, both, 'f', "file") {
+    /*if let Some(ArgValue::String(f)) = get_val!(parser, both, 'f', "file") {
         println!("{f}");
         filename = f;
-    } else if Path::new("auther.toml").exists() {
-        filename = String::from("auther.toml");
-    } else if let Some(path) = config {
-        filename = path;
+    } else */
+    if Path::new("auther.toml").exists() {
+        String::from("auther.toml")
+    // } else if let Some(path) = config {
+    //     filename = path;
     } else {
         let mut path = home_dir().unwrap_or_else(|| {
             eprintln!("error: failed to get home directory");
@@ -35,62 +39,286 @@ fn get_passfile(parser: &ArgumentParser) -> String {
         });
         path.push("auther.toml");
 
-        filename = path.display().to_string();
+        path.display().to_string()
     }
-
-    filename
 }
 
-fn main() {
-    let mut parser = ArgumentParser::new();
-    parser.add(arg!(flag, both, 'h', "help"));
-    parser.add(arg!(str, both, 'n', "new"));
-    parser.add(arg!(str, both, 'c', "complete"));
-    parser.add(arg!(flag, both, 'l', "list"));
-    parser.add(arg!(str, both, 'f', "file"));
-    parser.add(arg!(str, long, "config"));
+fn decrypt(key: String, file: String) -> Result<String, &'static str> {
+    let mc = new_magic_crypt!(key, 256);
 
-    let remainder = match parser.parse() {
-        Err(e) => {
-            eprintln!("error (while parsing arguments): {e}");
-            exit(1);
-        }
-        Ok(r) => r,
-    };
+    if let Ok(mut file) = File::open(file) {
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)
+            .map_err(|_| "Failed to read file")?;
 
-    let _key = remainder.get(0).unwrap_or_else(|| {
-        eprintln!("error: must pass a key");
-        exit(1);
-    });
+        let decrypted = mc
+            .decrypt_bytes_to_bytes(&data)
+            .map_err(|_| "Failed to decrypt data")?;
+        Ok(String::from_utf8(decrypted).map_err(|_| "Failed to decrypt data")?)
+    } else {
+        Err("Failed to open file")
+    }
+}
 
-    if get_flag!(parser, both, 'h', "help") {
-        println!(
-            "{} [options]\n\
-        \x20     --help / -h        : prints this help message\n\
-        \x20      --new / -n <todo> : creates a new todo, with the given text\n\
-        \x20                          parses all metadata tags\n\
-        \x20 --complete / -c <todo> : completes the todo, specified by the given text\n\
-        \x20                          if no todo matches the text, looks for a todo with\n\
-        \x20                          that id (using the `id:` tag)\n\
-        \x20     --list / -l        : prints this help message\n\
-        \x20   --config      <file> : specifies the config file\n\
-        \x20                          defaults to ~/.todo-cfg.txt\n\
-        \x20  --project      <tag>  : filters by project tag\n\
-        \x20  --context      <tag>  : filters by context tag\n\
-        \x20  --archive / -a        : archives completed tasks\n\
-        \x20                          default archive file is source + .archive\n\
-        \x20     --file / -f <file> : specifies the source file\n\
-        \x20                          if todo.txt exists in the current directory,\n\
-        \x20                          defaults to that; otherwise, defaults to config\n\
-        \n\
-        Config is minimal for now, consisting of just one line defining\n\
-        the default password file.\n\
-        ",
-            parser.binary.unwrap_or("todo".to_string())
-        );
+fn encrypt(key: String, file: String, data: &PassManager) -> Result<(), &'static str> {
+    let mc = new_magic_crypt!(key, 256);
+    let encrypted = mc.encrypt_str_to_bytes(toml::to_string(data).unwrap());
 
-        exit(0);
+    if let Ok(mut file) = File::create(file) {
+        file.write_all(&encrypted)
+            .map_err(|_| "Failed to write to file")?;
+    } else {
+        return Err("Failed to open file");
     }
 
-    let _passfile = get_passfile(&parser);
+    Ok(())
+}
+
+struct Passwords {
+    passwords: PassManager,
+    key: String,
+
+    location: String,
+    email: String,
+    username: String,
+    password: String,
+    passkey: String,
+
+    dec_passkey: String,
+
+    save_error: Option<String>,
+    read_error: Option<String>,
+}
+
+impl Default for Passwords {
+    fn default() -> Self {
+        Self {
+            passwords: PassManager::new(),
+            key: String::new(),
+
+            location: String::new(),
+            email: String::new(),
+            username: String::new(),
+            password: String::new(),
+            passkey: String::new(),
+
+            dec_passkey: String::new(),
+
+            save_error: None,
+            read_error: None,
+        }
+    }
+}
+
+impl eframe::App for Passwords {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.label(egui::RichText::new("Auther").heading());
+                ui.label(egui::RichText::new("Password Manager").italics());
+
+                ui.separator();
+
+                ui.label("New Password");
+                ui.text_edit_singleline(&mut self.password);
+
+                ui.label("Location");
+                ui.text_edit_singleline(&mut self.location);
+
+                ui.label("Email");
+                ui.text_edit_singleline(&mut self.email);
+
+                ui.label("Username");
+                ui.text_edit_singleline(&mut self.username);
+
+                ui.label("Encryption key (optional)");
+                ui.text_edit_singleline(&mut self.passkey);
+
+                if ui.button("Create").clicked() {
+                    let pass = self.password.clone();
+                    self.password.clear();
+
+                    let location = self.location.clone();
+                    self.location.clear();
+
+                    let email = self.email.clone();
+                    self.email.clear();
+
+                    let username = self.username.clone();
+                    self.username.clear();
+
+                    let key = self.passkey.clone();
+                    self.passkey.clear();
+
+                    let mut data = Data {
+                        location,
+                        email: None,
+                        username: None,
+                    };
+
+                    if !email.is_empty() {
+                        data.email = Some(email);
+                    }
+
+                    if !username.is_empty() {
+                        data.username = Some(username);
+                    }
+
+                    if key.is_empty() {
+                        let mut pass = Password::plain(pass);
+                        pass.add(data);
+
+                        self.passwords.add_password(pass);
+                    } else {
+                        let mut pass = Password::new(Passkey::Plain(pass).encrypt(&key).unwrap());
+                        pass.add(data);
+
+                        self.passwords.add_password(pass);
+                    }
+                }
+
+                ui.separator();
+
+                ui.label("Passkey (to decrypt encrypted passwords)");
+                ui.text_edit_singleline(&mut self.dec_passkey);
+
+                ui.separator();
+
+                ui.vertical(|ui| {
+                    for password in self.passwords.passwords() {
+                        for data in password.data() {
+                            ui.label(format!("Location: {}", data.location));
+                            if let Some(email) = data.email {
+                                ui.label(format!("Email: {email}"));
+                            }
+                            if let Some(username) = data.username {
+                                ui.label(format!("Email: {username}"));
+                            }
+
+                            ui.separator();
+                        }
+
+                        if ui.label("Show password").hovered() {
+                            match password.pass {
+                                Passkey::Plain(pass) => {
+                                    ui.label(pass);
+                                }
+                                Passkey::Hash(..) => {
+                                    ui.label("This password is hashed, can't be displayed");
+                                }
+                                Passkey::Encrypted(_) => {
+                                    if self.dec_passkey.is_empty() {
+                                        ui.label(
+                                            "This password is encrypted, please provide the key",
+                                        );
+                                    }
+
+                                    if let Some(Passkey::Plain(pass)) =
+                                        password.pass.decrypt(&self.dec_passkey)
+                                    {
+                                        ui.label(pass);
+                                    }
+                                }
+                            }
+                        }
+
+                        ui.separator();
+                    }
+                });
+
+                ui.label("Encryption key");
+                ui.text_edit_singleline(&mut self.key);
+
+                if ui.button("Save to file").clicked() {
+                    self.save_error = None;
+                    let file = get_passfile();
+
+                    if self.key.is_empty() {
+                        match File::create(file) {
+                            Ok(mut file) => match toml::to_string_pretty(&self.passwords) {
+                                Ok(pass) => {
+                                    match file.write_all(&pass.bytes().collect::<Vec<u8>>()) {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            self.save_error = Some(e.to_string());
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    self.save_error = Some(e.to_string());
+                                }
+                            },
+                            Err(e) => {
+                                self.save_error = Some(e.to_string());
+                            }
+                        }
+                    } else {
+                        let key = self.key.clone();
+                        match encrypt(key, file, &self.passwords) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                self.save_error = Some(e.to_owned());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(e) = self.save_error.clone() {
+                    ui.label(e);
+                }
+
+                if ui.button("Read from file").clicked() {
+                    self.read_error = None;
+                    let file = get_passfile();
+                    if self.key.is_empty() {
+                        match read_to_string(file) {
+                            Ok(p) => {
+                                if let Ok(p) = PassManager::try_from(p) {
+                                    self.passwords = p;
+                                }
+                            }
+                            Err(e) => {
+                                self.read_error = Some(e.to_string());
+                            }
+                        }
+                    } else {
+                        let key = self.key.clone();
+                        match decrypt(key, file) {
+                            Ok(decrypted) => {
+                                if let Ok(p) = PassManager::try_from(decrypted) {
+                                    self.passwords = p;
+                                }
+                            }
+                            Err(e) => {
+                                self.read_error = Some(e.to_owned());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(e) = self.read_error.clone() {
+                    ui.label(e);
+                }
+
+                if ui.button("Quit").clicked() {
+                    exit(0);
+                }
+            });
+        });
+    }
+}
+
+fn main() -> Result<(), eframe::Error> {
+    // let passfile = get_passfile(/*&parser*/);
+
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(460.0, 320.0)),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "Auther",
+        options,
+        Box::new(|_cc| Box::<Passwords>::default()),
+    )
 }

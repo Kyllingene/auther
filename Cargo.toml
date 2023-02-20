@@ -2,7 +2,7 @@
 name = "auther"
 description = "a terminal password manager"
 
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 license = "MIT"
@@ -13,3 +13,6 @@ license = "MIT"
 sarge = "2.0"
 auther-lib = { path = "auther-lib", features = ["serde"] }
 dirs = "4.0.0"
+magic-crypt = "3.1"
+eframe = "0.21"
+toml = "0.7"
