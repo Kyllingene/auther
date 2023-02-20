@@ -186,8 +186,21 @@ impl eframe::App for Passwords {
 
                 ui.vertical(|ui| {
                     for password in self.passwords.passwords() {
+                        if ui.button("Delete").clicked() {
+                            self.passwords.remove(password.pass.clone());
+                            continue;
+                        }
+
                         for data in password.data() {
-                            ui.label(format!("Location: {}", data.location));
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Location: {}", data.location));
+                                if ui.button("Remove").clicked() {
+                                    self.passwords
+                                        .get_mut(self.passwords.get_data(data.clone()).unwrap())
+                                        .unwrap()
+                                        .remove_location(data.location.clone());
+                                }
+                            });
                             if let Some(email) = data.email {
                                 ui.label(format!("Email: {email}"));
                             }
