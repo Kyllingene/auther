@@ -132,7 +132,7 @@ impl eframe::App for Passwords {
                 ui.text_edit_singleline(&mut self.username);
 
                 ui.label("Encryption key (optional)");
-                ui.text_edit_singleline(&mut self.passkey);
+                ui.add(egui::TextEdit::singleline(&mut self.passkey).password(true));
 
                 if ui.button("Create").clicked() {
                     let pass = self.password.clone();
@@ -180,7 +180,7 @@ impl eframe::App for Passwords {
                 ui.separator();
 
                 ui.label("Passkey (to decrypt encrypted passwords)");
-                ui.text_edit_singleline(&mut self.dec_passkey);
+                ui.add(egui::TextEdit::singleline(&mut self.dec_passkey).password(true));
 
                 ui.separator();
 
@@ -227,7 +227,7 @@ impl eframe::App for Passwords {
                 });
 
                 ui.label("Encryption key");
-                ui.text_edit_singleline(&mut self.key);
+                ui.add(egui::TextEdit::singleline(&mut self.key).password(true));
 
                 if ui.button("Save to file").clicked() {
                     self.save_error = None;

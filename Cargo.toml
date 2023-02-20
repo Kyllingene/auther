@@ -2,7 +2,7 @@
 name = "auther"
 description = "a terminal password manager"
 
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 
 license = "MIT"
